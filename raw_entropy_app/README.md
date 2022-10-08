@@ -1,1 +1,1 @@
-A simple app that extracts entropy from ythe TRNG and sends then to the host.
+A simple app that extracts entropy from the TRNG and sends it to the host.
