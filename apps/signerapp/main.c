@@ -160,9 +160,10 @@ int main(void)
 			left -= nbytes;
 
 			if (left == 0) {
-				wait_touch_ledflash(LED_GREEN, 350000);
-				// All loaded, device touched, let's
-				// sign the message
+				// Not requiring touch for the test-loop
+				// wait_touch_ledflash(LED_GREEN, 350000);
+				// // All loaded, device touched, let's
+				// // sign the message
 				crypto_ed25519_sign(signature,
 						    (void *)local_cdi, pubkey,
 						    message, message_size);

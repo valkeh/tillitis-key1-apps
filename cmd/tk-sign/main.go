@@ -88,7 +88,7 @@ func main() {
 	fmt.Printf("Public Key from device (UID %v): %x\n", udi, pubkey)
 
 	fmt.Printf("Sending a %v bytes message for signing.\n", len(message))
-	fmt.Printf("Device will flash green when touch is required ...\n")
+	// fmt.Printf("Device will flash green when touch is required ...\n")
 	signature, err := signer.Sign(message)
 	if err != nil {
 		fmt.Printf("Sign failed: %v\n", err)
