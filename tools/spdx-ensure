@@ -1,0 +1,80 @@
+#!/bin/bash
+set -eu
+
+tag="SPDX-License-Identifier:"
+
+missingok=(
+.clang-format
+.editorconfig
+.github/workflows/ci.yml
+.gitignore
+.golangci.yml
+LICENSES/README.md
+LICENSES/bsd-2.txt
+LICENSES/cc-universal.txt
+LICENSES/gpl-v2.only.txt
+Makefile
+README.md
+apps/Makefile
+apps/blake2s/LICENSE
+apps/blake2s/README.md
+apps/blake2s/blake2s.c
+apps/blake2s/blake2s.h
+apps/rng_stream/README.md
+apps/signerapp/monocypher/LICENSE
+apps/signerapp/monocypher/README.md
+apps/signerapp/runsign.sh
+dco.md
+debian/.gitignore
+debian/build-pkg.sh
+debian/deb/control.tmpl
+debian/deb/copyright
+debian/deb/lintian--overrides
+debian/deb/postinst
+docs/release_notes.md
+go.mod
+go.sum
+gotools/Makefile
+gotools/go.mod
+gotools/go.sum
+system/60-tkey.rules
+system/90-tkey-ssh-agent.rules
+system/tkey-ssh-agent.1
+system/tkey-ssh-agent.service.tmpl
+test/test-loop.sh
+)
+
+res=0
+for f in "${missingok[@]}"; do
+  if [[ ! -e "$f" ]]; then
+    if (( !res )); then
+      printf "Some files in missingok are themselves missing:\n"
+      res=1
+    fi
+    printf "%s\n" "$f"
+  fi
+done
+if (( res )); then
+  printf "Bailing out!\n"
+  exit "$res"
+fi
+
+mapfile -t repofiles < <(git ls-files || true)
+if [[ -z "${repofiles[*]}" ]]; then
+  printf "No files in repo?!\n"
+  exit 1
+fi
+
+res=0
+for repof in "${repofiles[@]}"; do
+  [[ " ${missingok[*]} " =~ \ $repof\  ]] && continue
+  if ! grep -q "$tag" "$repof"; then
+    if (( !res )); then
+      printf "Files missing the tag \"%s\":\n" "$tag"
+      res=1
+    fi
+    printf "%s\n" "$repof"
+  fi
+done
+
+exit "$res"
