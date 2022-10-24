@@ -1,0 +1,98 @@
+#!/bin/sh
+set -eu
+
+# TODO, maybe save pid of started agent, so we can check if it is really
+# running, and ignore any stray socket if it isn't.
+
+wrapperpath="$HOME/tk-signing-wrapper"
+sockpath="$HOME/tk-signing-ssh-agent.sock"
+logpath="$HOME/tk-signing-ssh-agent.log"
+
+umask 077
+
+if [ "${1:-}" = "--no" ]; then
+  printf "Reverting repo to old openpgp signing...\n"
+  set -x
+  git config gpg.format openpgp
+  { set +x; } 2>/dev/null
+  exit 0
+fi
+
+portarg=""
+[ -n "${1:-}" ] && portarg="--port $1"
+
+if ! hash 2>/dev/null tk-ssh-agent; then
+  printf "tk-ssh-agent not found, expecting it to be installed in PATH\n"
+  exit 1
+fi
+
+reporoot="$(git rev-parse --show-toplevel)"
+if [ -z "$reporoot" ]; then
+  printf "run me in a git repository\n"
+  exit 1
+fi
+
+printf "Settinge up repo for ssh signing...\n"
+set -x
+git config commit.gpgsign true
+git config tag.gpgsign true
+git config gpg.format ssh
+git config gpg.ssh.defaultKeyCommand "$wrapperpath -L"
+git config gpg.ssh.program "$wrapperpath"
+git config gpg.ssh.allowedSignersFile "allowed_signers"
+{ set +x; } 2>/dev/null
+
+cat >"$wrapperpath" <<'EOF'
+#!/bin/sh
+export SSH_AUTH_SOCK="@@sockpath@@"
+if [ "$1" = "-L" ]; then
+  # assumes only 1 key in TK1
+  key="$(ssh-add -L)"
+  [ -z "$key" ] && exit 1
+  # TODO should prefix this output with "key::" for later git versions (see man git-config)
+  printf "%s" "$key"
+  exit 0
+fi
+exec ssh-keygen "$@"
+EOF
+chmod +x "$wrapperpath"
+
+sed -i "s:@@sockpath@@:$sockpath:" "$wrapperpath"
+
+rm -f "$logpath"
+touch "$logpath"
+if [ -S "$sockpath" ]; then
+  printf "The socket exists (%s), assuming tk-ssh-agent is running.\n" "$sockpath"
+else
+  printf "Starting tk-ssh-agent...\n"
+  # doing this to get the app loaded if needed:
+  # shellcheck disable=SC2086
+  if tk-ssh-agent >"$logpath" 2>&1 --show-pubkey $portarg; then
+    # shellcheck disable=SC2086
+    tk-ssh-agent >"$logpath" 2>&1 -a "$sockpath" $portarg &
+    sleep 2s
+  fi
+fi
+
+if ! SSH_AUTH_SOCK="$sockpath" ssh-add >/dev/null -L; then
+  cat "$logpath"
+  printf "Couldn't connect to tk-ssh-agent, or to TK1. Try passing one of the following ports as an argument:\n"
+  tk-ssh-agent --list-ports
+  if [ -S "$sockpath" ]; then
+    printf "The tk-ssh-agent might also no longer be running, and the socket just laying around. You can try removing the socket.\n"
+  fi
+  exit 1
+else
+  printf "Successfully talked to TK1 through the tk-ssh-agent.\n"
+fi
+
+# TODO should we do this?
+pubkey="$(SSH_AUTH_SOCK="$sockpath" ssh-add -L)"
+[ -z "$pubkey" ] && exit 1
+cd "$reporoot"
+[ ! -e allowed_signers ] && touch allowed_signers
+if ! grep -q "$pubkey" allowed_signers; then
+  myemail="$(git config --get user.email)"
+  printf >>allowed_signers "%s %s\n" "$myemail" "$pubkey"
+  git --no-pager diff allowed_signers
+fi
