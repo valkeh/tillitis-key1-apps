@@ -1,7 +1,11 @@
 #!/bin/bash
 
-portflag=  # use auto-detect
-#portflag="--port /dev/ttyACM0"
+# Set the environment variable USB_DEVICE to connect to a specific key
+if [[ -z "${USB_DEVICE}" ]]; then
+  portflag=
+else
+  portflag="--port ${USB_DEVICE}"
+fi
 
 speedflag=  # use default
 #speedflag="--speed 62500"
