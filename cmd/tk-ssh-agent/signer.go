@@ -39,7 +39,7 @@ type Signer struct {
 }
 
 func NewSigner(devPath string, speed int, enterUSS bool, fileUSS string, exitFunc func(int)) (*Signer, error) {
-	tk1.SilenceLogging()
+	// tk1.SilenceLogging()
 	le.Printf("Connecting to device on serial port %s ...\n", devPath)
 	tk, err := tk1.New(devPath, speed)
 	if err != nil {

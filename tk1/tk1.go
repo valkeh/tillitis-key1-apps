@@ -202,15 +202,41 @@ func (tk TillitisKey) LoadApp(bin []byte, secretPhrase []byte) error {
 	}
 
 	// Load the file
+	const queueLen = 3 // TODO queueLen=1 works
 	var offset int
+	var queue []int
+	cmdID := 0
+
+	// TODO should we on error also receive what's outstanding in the
+	// queue? to leave stick in a better state for new attempts to
+	// load app. hm, but error is prob already fatal
 	for nsent := 0; offset < binLen; offset += nsent {
-		nsent, err = tk.loadAppData(bin[offset:])
+		nsent, err = tk.sendCmdLoadAppData(cmdID, bin[offset:])
 		if err != nil {
-			return fmt.Errorf("loadAppData: %w", err)
+			return fmt.Errorf("sendCmdLoadAppData: %w", err)
+		}
+		queue = append(queue, cmdID)
+		fmt.Printf("QUEUE after send ID:%d: %v (nsent:%d offset:%d binlen:%d)\n", cmdID, queue, nsent, offset, binLen)
+		cmdID++
+		if cmdID > 3 {
+			cmdID = 0
+		}
+		if len(queue) == queueLen {
+			var id int
+			id, queue = queue[0], queue[1:]
+			if err = tk.receiveRspLoadAppData(id); err != nil {
+				return fmt.Errorf("receiveRspLoadAppData: %w", err)
+			}
+			fmt.Printf("QUEUE after recv ID:%d: %v\n", id, queue)
 		}
 	}
 	if offset > binLen {
 		return fmt.Errorf("transmitted more than expected")
+	}
+	for _, id := range queue {
+		if err = tk.receiveRspLoadAppData(id); err != nil {
+			return fmt.Errorf("receiveRspLoadAppData: %w", err)
+		}
 	}
 
 	le.Printf("Going to getappdigest\n")
@@ -296,6 +322,46 @@ func (tk TillitisKey) setAppSize(size int) error {
 
 	if rx[2] != StatusOK {
 		return fmt.Errorf("SetAppSize NOK")
+	}
+
+	return nil
+}
+
+func (tk TillitisKey) sendCmdLoadAppData(id int, content []byte) (int, error) {
+	tx, err := NewFrameBuf(cmdLoadAppData, id)
+	if err != nil {
+		return 0, err
+	}
+
+	payload := make([]byte, CmdLen128.Bytelen()-1)
+	copied := copy(payload, content)
+
+	// Add padding if not filling the payload buffer.
+	if copied < len(payload) {
+		padding := make([]byte, len(payload)-copied)
+		copy(payload[copied:], padding)
+	}
+
+	copy(tx[2:], payload)
+
+	Dump("LoadAppData tx", tx)
+
+	if err = tk.Write(tx); err != nil {
+		return 0, err
+	}
+
+	return copied, nil
+}
+
+func (tk TillitisKey) receiveRspLoadAppData(expectedID int) error {
+	rx, _, err := tk.ReadFrame(rspLoadAppData, expectedID)
+	Dump(fmt.Sprintf("LoadAppData rx (expectedID:%d)", expectedID), rx)
+	if err != nil {
+		return fmt.Errorf("ReadFrame: %w", err)
+	}
+
+	if rx[2] != StatusOK {
+		return fmt.Errorf("LoadAppData NOK (expectedID:%d)", expectedID)
 	}
 
 	return nil
