@@ -26,6 +26,7 @@ package tk1
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -78,15 +79,11 @@ func (tk TillitisKey) Close() error {
 	return nil
 }
 
-// SetReadTimeout sets the timeout of the underlying serial connection to the
-// TK1. Pass 0 seconds to not have any timeout. Note that the timeout
+// SetReadTimeout sets the timeout of the underlying serial connection
+// to the TK1. Pass -1 to not have any timeout. Note that the timeout
 // implemented in the serial lib only works for simple Read(). E.g.
 // io.ReadFull() will Read() until the buffer is full.
-func (tk TillitisKey) SetReadTimeout(seconds int) error {
-	var t time.Duration = -1
-	if seconds > 0 {
-		t = time.Duration(seconds) * time.Second
-	}
+func (tk TillitisKey) SetReadTimeout(t time.Duration) error {
 	if err := tk.conn.SetReadTimeout(t); err != nil {
 		return fmt.Errorf("SetReadTimeout: %w", err)
 	}
@@ -118,7 +115,7 @@ func (tk TillitisKey) GetNameVersion() (*NameVersion, error) {
 		return nil, err
 	}
 
-	if err = tk.SetReadTimeout(2); err != nil {
+	if err = tk.SetReadTimeout(2 * time.Second); err != nil {
 		return nil, err
 	}
 
@@ -127,7 +124,7 @@ func (tk TillitisKey) GetNameVersion() (*NameVersion, error) {
 		return nil, fmt.Errorf("ReadFrame: %w", err)
 	}
 
-	if err = tk.SetReadTimeout(0); err != nil {
+	if err = tk.SetReadTimeout(-1); err != nil {
 		return nil, fmt.Errorf("SetReadTimeout: %w", err)
 	}
 
@@ -210,33 +207,59 @@ func (tk TillitisKey) LoadApp(bin []byte, secretPhrase []byte) error {
 	// TODO should we on error also receive what's outstanding in the
 	// queue? to leave stick in a better state for new attempts to
 	// load app. hm, but error is prob already fatal
+
+	err = tk.SetReadTimeout(5 * time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("SetReadTimeout: %w", err)
+	}
+
 	for nsent := 0; offset < binLen; offset += nsent {
-		nsent, err = tk.sendCmdLoadAppData(cmdID, bin[offset:])
-		if err != nil {
-			return fmt.Errorf("sendCmdLoadAppData: %w", err)
-		}
-		queue = append(queue, cmdID)
-		fmt.Printf("QUEUE after send ID:%d: %v (nsent:%d offset:%d binlen:%d)\n", cmdID, queue, nsent, offset, binLen)
-		cmdID++
-		if cmdID > 3 {
-			cmdID = 0
-		}
-		if len(queue) == queueLen {
-			var id int
-			id, queue = queue[0], queue[1:]
-			if err = tk.receiveRspLoadAppData(id); err != nil {
-				return fmt.Errorf("receiveRspLoadAppData: %w", err)
+		if len(queue) < queueLen {
+			nsent, err = tk.sendCmdLoadAppData(cmdID, bin[offset:])
+			if err != nil {
+				return fmt.Errorf("sendCmdLoadAppData: %w", err)
 			}
-			fmt.Printf("QUEUE after recv ID:%d: %v\n", id, queue)
+			queue = append(queue, cmdID)
+			fmt.Printf("QUEUE after send ID:%d: %v (nsent:%d offset:%d binlen:%d)\n", cmdID, queue, nsent, offset, binLen)
+			cmdID++
+			if cmdID > 3 {
+				cmdID = 0
+			}
+		}
+
+		if len(queue) == 0 {
+			fmt.Printf("QUEUE empty\n")
+			continue
+		}
+
+		var received bool
+		received, err = tk.tryReceiveRspLoadAppData(queue[0])
+		if err != nil {
+			return fmt.Errorf("receiveRspLoadAppData: %w", err)
+		}
+		if received {
+			_, queue = queue[0], queue[1:]
+			fmt.Printf("QUEUE after recv: %v\n", queue)
+		} else {
+			fmt.Printf("QUEUE: %v\n", queue)
 		}
 	}
 	if offset > binLen {
 		return fmt.Errorf("transmitted more than expected")
 	}
+
+	err = tk.SetReadTimeout(-1)
+	if err != nil {
+		return fmt.Errorf("SetReadTimeout: %w", err)
+	}
+
 	for _, id := range queue {
-		if err = tk.receiveRspLoadAppData(id); err != nil {
+		var received bool
+		received, err = tk.tryReceiveRspLoadAppData(id)
+		if err != nil {
 			return fmt.Errorf("receiveRspLoadAppData: %w", err)
 		}
+		fmt.Printf("received last: %v\n", received)
 	}
 
 	le.Printf("Going to getappdigest\n")
@@ -353,18 +376,22 @@ func (tk TillitisKey) sendCmdLoadAppData(id int, content []byte) (int, error) {
 	return copied, nil
 }
 
-func (tk TillitisKey) receiveRspLoadAppData(expectedID int) error {
+func (tk TillitisKey) tryReceiveRspLoadAppData(expectedID int) (bool, error) {
 	rx, _, err := tk.ReadFrame(rspLoadAppData, expectedID)
 	Dump(fmt.Sprintf("LoadAppData rx (expectedID:%d)", expectedID), rx)
 	if err != nil {
-		return fmt.Errorf("ReadFrame: %w", err)
+		if errors.Is(err, errReadTimeout) {
+			fmt.Printf("no frame to read yet\n")
+			return false, nil
+		}
+		return false, fmt.Errorf("ReadFrame: %w", err)
 	}
 
 	if rx[2] != StatusOK {
-		return fmt.Errorf("LoadAppData NOK (expectedID:%d)", expectedID)
+		return false, fmt.Errorf("LoadAppData NOK (expectedID:%d)", expectedID)
 	}
 
-	return nil
+	return true, nil
 }
 
 // loadAppData() loads a chunk of the raw app binary into the TK1 and

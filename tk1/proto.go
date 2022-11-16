@@ -4,7 +4,9 @@
 package tk1
 
 import (
+	"bufio"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -189,6 +191,20 @@ func (tk TillitisKey) Write(d []byte) error {
 	return nil
 }
 
+func (tk TillitisKey) peek() bool {
+	fmt.Printf("Peek\n")
+	r := bufio.NewReader(tk.conn)
+	_, err := r.Peek(1)
+	if err != nil {
+		fmt.Printf("Peek no\n")
+		return false
+	}
+	fmt.Printf("Peek yes\n")
+	return true
+}
+
+var errReadTimeout = errors.New("Read timeout")
+
 // ReadFrame() reads a response in the framing protocol. The header
 // byte is parsed and its command length and endpoint are checked
 // against the expectedResp parameter; its ID is checked against
@@ -214,7 +230,7 @@ func (tk TillitisKey) ReadFrame(expectedResp Cmd, expectedID int) ([]byte, Frami
 		return nil, FramingHdr{}, fmt.Errorf("Read: %w", err)
 	}
 	if n == 0 {
-		return nil, FramingHdr{}, fmt.Errorf("Read timeout")
+		return nil, FramingHdr{}, errReadTimeout
 	}
 
 	hdr, err := parseframe(rxHdr[0])

@@ -19,6 +19,7 @@ package tk1sign
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/tillitis/tillitis-key1-apps/tk1"
 )
@@ -100,7 +101,7 @@ func (s Signer) GetAppNameVersion() (*tk1.NameVersion, error) {
 		return nil, fmt.Errorf("Write: %w", err)
 	}
 
-	err = s.tk.SetReadTimeout(2)
+	err = s.tk.SetReadTimeout(2 * time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("SetReadTimeout: %w", err)
 	}
@@ -110,7 +111,7 @@ func (s Signer) GetAppNameVersion() (*tk1.NameVersion, error) {
 		return nil, fmt.Errorf("ReadFrame: %w", err)
 	}
 
-	err = s.tk.SetReadTimeout(0)
+	err = s.tk.SetReadTimeout(-1)
 	if err != nil {
 		return nil, fmt.Errorf("SetReadTimeout: %w", err)
 	}
