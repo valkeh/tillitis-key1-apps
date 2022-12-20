@@ -11,3 +11,34 @@ fail() {
 say() {
   printf "\e[33m%s\e[0m\n" "$1"
 }
+
+runapp() {
+  tmpf="$(mktemp)"
+  if ! ./tkey-runapp >"$tmpf" ./app.bin; then
+    rm -f "$tmpf"
+    fail "We didn't load the signer app, bailing out! Please re-insert the TKey."
+  fi
+  udi="$(sed -n "s/udi: *\([:0-9a-z]\+\)/\1/ip" "$tmpf" | tr -d ":" | tr A-Z a-z)"
+  if [ -z "$udi" ]; then
+    rm -f "$tmpf"
+    fail "Failed to get UDI"
+  fi
+  rm -f "$tmpf"
+  printf "%s" "$udi"
+}
+
+getpubkey() {
+  tmpf="$(mktemp)"
+  if ! ./tkey-sign >"$tmpf" --show-pubkey; then
+    cat "$tmpf"
+    rm -f "$tmpf"
+    fail "tkey-sign failed somehow?"
+  fi
+  pub="$(cat "$tmpf")"
+  if ! printf "%s" "$pub" | grep -q "^[0-9a-z]\+$"; then
+    rm -f "$tmpf"
+    fail "Failed to get publickey?"
+  fi
+  rm -f "$tmpf"
+  printf "%s" "$pub"
+}

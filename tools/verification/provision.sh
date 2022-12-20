@@ -11,31 +11,8 @@ if [ ! -e "$tillitisprivf" ]; then
   ssh-keygen -t ed25519 -N "" -C "tillitis-signing-key" -f "$tillitisprivf"
 fi
 
-tmpf="$(mktemp)"
-cleanup() {
-  rm -f "$tmpf"
-}
-trap cleanup EXIT
-
-# TODO so, exactly the same signerapp must be run both when provisioning and
-# verifiying
-if ! ./tkey-runapp >"$tmpf" ./app.bin; then
-  fail "We didn't load the signer app, bailing out! Please re-insert the TKey."
-fi
-udi="$(sed -n "s/udi: *\([:0-9a-z]\+\)/\1/ip" "$tmpf" | tr -d ":" | tr A-Z a-z)"
-if [ -z "$udi" ]; then
-  fail "Failed to get UDI"
-fi
-
-if ! ./tkey-sign >"$tmpf" --show-pubkey; then
-  cat "$tmpf"
-  fail "tkey-sign failed somehow?"
-fi
-
-pub="$(cat "$tmpf")"
-if ! printf "%s" "$pub" | grep -q "^[0-9a-z]\+$"; then
-  fail "Failed to get publickey?"
-fi
+udi="$(runapp)"
+pub="$(getpubkey)"
 
 hashf="$PWD/tillitis-hash-udi-$udi"
 
