@@ -1,8 +1,11 @@
 #!/bin/sh -eu
 
+tkey_provision_tag=v0.0.1
+tkey_provision_tag=main
+
 cd "${0%/*}"
 . ./common
-./check.sh
+./check.sh "provision" "$tkey_provision_tag"
 
 # TODO producing the private key here...
 tillitisprivf="./tillitis-signing-key"
@@ -20,6 +23,6 @@ if [ -e "$hashf" ]; then
   fail "$hashf: file exists"
 fi
 
-printf >"$hashf" "hash(%s,%s)\n" "$udi" "$pub"
+printf >"$hashf" "hash(%s,%s) %s\n" "$udi" "$pub" "$tkey_provision_tag"
 
 ssh-keygen -Y sign -f "$tillitisprivf" -n file "$hashf"

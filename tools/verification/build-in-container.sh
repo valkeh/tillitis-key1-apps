@@ -3,13 +3,15 @@
 cd "${0%/*}"
 . ./common
 
+tag="${1?pass a tag}"
+
 crun=docker
 cname="tkey-build"
 
 $crun run -it --name "$cname" \
       --mount type=bind,source="$(pwd)/containerbuild",target=/containerbuild \
       tkey-builder \
-      /bin/bash /containerbuild "$TKEY_VERIFY_TAG"
+      /bin/bash /containerbuild "$tag"
 
 # Copy to expected locations
 $crun cp "$cname":/tillitis-key1-apps/tkey-runapp ../../

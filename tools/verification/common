@@ -1,8 +1,4 @@
 
-# TODO
-TKEY_VERIFY_TAG=v0.0.1
-TKEY_VERIFY_TAG=main
-
 fail() {
   printf "\e[31m%s\e[0m\n" "$1"
   exit 1
