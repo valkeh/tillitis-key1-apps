@@ -1,4 +1,4 @@
-// Copyright (C) 2022 - Tillitis AB
+// Copyright (C) 2022, 2023 - Tillitis AB
 // SPDX-License-Identifier: GPL-2.0-only
 
 package main
@@ -82,19 +82,9 @@ func (s RandomGen) GetAppNameVersion() (*tk1.NameVersion, error) {
 		return nil, fmt.Errorf("Write: %w", err)
 	}
 
-	err = s.tk.SetReadTimeout(2)
-	if err != nil {
-		return nil, fmt.Errorf("SetReadTimeout: %w", err)
-	}
-
-	rx, _, err := s.tk.ReadFrame(rspGetNameVersion, id)
+	rx, _, err := s.tk.ReadFrame(rspGetNameVersion, id, 2000)
 	if err != nil {
 		return nil, fmt.Errorf("ReadFrame: %w", err)
-	}
-
-	err = s.tk.SetReadTimeout(0)
-	if err != nil {
-		return nil, fmt.Errorf("SetReadTimeout: %w", err)
 	}
 
 	nameVer := &tk1.NameVersion{}
@@ -121,7 +111,7 @@ func (s RandomGen) GetRandom(bytes int) ([]byte, error) {
 		return nil, fmt.Errorf("Write: %w", err)
 	}
 
-	rx, _, err := s.tk.ReadFrame(rspGetRandom, id)
+	rx, _, err := s.tk.ReadFrame(rspGetRandom, id, 0)
 	tk1.Dump("GetRandom rx", rx)
 	if err != nil {
 		return nil, fmt.Errorf("ReadFrame: %w", err)

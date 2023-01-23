@@ -1,4 +1,4 @@
-// Copyright (C) 2022 - Tillitis AB
+// Copyright (C) 2022, 2023 - Tillitis AB
 // SPDX-License-Identifier: GPL-2.0-only
 
 package main
@@ -83,7 +83,7 @@ func (t Timer) setInt(sendCmd appCmd, expectedReceiveCmd appCmd, i int) error {
 		return fmt.Errorf("Write: %w", err)
 	}
 
-	rx, _, err := t.tk.ReadFrame(expectedReceiveCmd, id)
+	rx, _, err := t.tk.ReadFrame(expectedReceiveCmd, id, 0)
 	tk1.Dump("rx", rx)
 	if err != nil {
 		return fmt.Errorf("ReadFrame: %w", err)
@@ -115,7 +115,7 @@ func (t Timer) StartTimer() error {
 		return fmt.Errorf("Write: %w", err)
 	}
 
-	rx, _, err := t.tk.ReadFrame(rspStartTimer, id)
+	rx, _, err := t.tk.ReadFrame(rspStartTimer, id, 0)
 	tk1.Dump("rx", rx)
 	if err != nil {
 		return fmt.Errorf("ReadFrame: %w", err)
