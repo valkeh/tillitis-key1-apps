@@ -1,4 +1,4 @@
-// Copyright (C) 2022 - Tillitis AB
+// Copyright (C) 2022, 2023 - Tillitis AB
 // SPDX-License-Identifier: GPL-2.0-only
 
 package main
@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tillitis/tillitis-key1-apps/internal/util"
 	"github.com/tillitis/tillitis-key1-apps/tk1"
+	"github.com/tillitis/tillitis-key1-apps/tk1sign"
 )
 
 // Use when printing err/diag msgs
@@ -85,7 +86,7 @@ green when the stick must be touched to complete a signature.`, progname)
 		exit(2)
 	}
 
-	if signerAppNoTouch != "" {
+	if tk1sign.SignerAppNoTouch != "" {
 		le.Printf("WARNING! This tkey-ssh-agent and signer app is built with the touch requirement removed\n")
 	}
 	if versionOnly {

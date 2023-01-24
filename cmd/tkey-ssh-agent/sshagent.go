@@ -1,4 +1,4 @@
-// Copyright (C) 2022 - Tillitis AB
+// Copyright (C) 2022, 2023 - Tillitis AB
 // SPDX-License-Identifier: GPL-2.0-only
 
 package main
@@ -14,13 +14,10 @@ import (
 	"time"
 
 	"github.com/gen2brain/beeep"
+	"github.com/tillitis/tillitis-key1-apps/tk1sign"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
-
-// May be set to non-empty at build time to indicate that the signer
-// app has been compiled with touch requirement removed.
-var signerAppNoTouch string
 
 type SSHAgent struct {
 	signer *Signer
@@ -95,7 +92,7 @@ func (s *SSHAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) 
 		return nil, fmt.Errorf("NewSignerFromSigner: %w", err)
 	}
 
-	if signerAppNoTouch == "" {
+	if tk1sign.SignerAppNoTouch == "" {
 		timer := time.AfterFunc(4*time.Second, func() {
 			err = beeep.Notify(progname, "Touch your Tillitis TKey to confirm SSH login.", "")
 			if err != nil {

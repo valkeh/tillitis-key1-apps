@@ -177,7 +177,7 @@ func (tk TillitisKey) GetUDI() (*UDI, error) {
 		return nil, err
 	}
 
-	rx, _, err := tk.ReadFrame(rspGetUDI, id, 0)
+	rx, _, err := tk.ReadFrame(rspGetUDI, id, 2000)
 	if err != nil {
 		return nil, fmt.Errorf("ReadFrame: %w", err)
 	}
@@ -289,7 +289,7 @@ func (tk TillitisKey) loadApp(size int, secretPhrase []byte) error {
 		return err
 	}
 
-	rx, _, err := tk.ReadFrame(rspLoadApp, id, 0)
+	rx, _, err := tk.ReadFrame(rspLoadApp, id, 2000)
 	if err != nil {
 		return fmt.Errorf("ReadFrame: %w", err)
 	}
@@ -336,7 +336,7 @@ func (tk TillitisKey) loadAppData(content []byte, last bool) ([32]byte, int, err
 	}
 
 	// Wait for reply
-	rx, _, err = tk.ReadFrame(expectedResp, id, 0)
+	rx, _, err = tk.ReadFrame(expectedResp, id, 2000)
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("ReadFrame: %w", err)
 	}
