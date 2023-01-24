@@ -1,4 +1,4 @@
-// Copyright (C) 2022 - Tillitis AB
+// Copyright (C) 2022, 2023 - Tillitis AB
 // SPDX-License-Identifier: GPL-2.0-only
 
 package main
@@ -12,20 +12,15 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"sync/atomic"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/tillitis/tillitis-key1-apps/internal/util"
 	"github.com/tillitis/tillitis-key1-apps/tk1"
 	"github.com/tillitis/tillitis-key1-apps/tk1sign"
 	"golang.org/x/crypto/ssh"
 )
-
-type constError string
-
-func (err constError) Error() string {
-	return string(err)
-}
 
 // nolint:typecheck // Avoid lint error when the embedding file is missing.
 // Makefile copies the built app here ./app.bin
@@ -34,23 +29,23 @@ func (err constError) Error() string {
 var appBinary []byte
 
 const (
+	idleDisconnect = 3 * time.Second
 	// 4 chars each.
 	wantAppName0 = "tk1 "
 	wantAppName1 = "sign"
-	// Custom errors
-	ErrMaybeWrongDevice = constError("no TKey on the serial port, or it's not in firmware mode (and already running wrong app)")
-	ErrNoDevice         = constError("no TKey connected")
 )
 
 type Signer struct {
-	tk        *tk1.TillitisKey
-	tkSigner  *tk1sign.Signer
-	devPath   string
-	speed     int
-	enterUSS  bool
-	fileUSS   string
-	pinentry  string
-	connected atomic.Bool
+	tk              *tk1.TillitisKey
+	tkSigner        *tk1sign.Signer
+	devPath         string
+	speed           int
+	enterUSS        bool
+	fileUSS         string
+	pinentry        string
+	mu              sync.Mutex
+	connected       bool
+	disconnectTimer *time.Timer
 }
 
 func NewSigner(devPathArg string, speedArg int, enterUSS bool, fileUSS string, pinentry string, exitFunc func(int)) *Signer {
@@ -62,14 +57,13 @@ func NewSigner(devPathArg string, speedArg int, enterUSS bool, fileUSS string, p
 
 	tkSigner := tk1sign.New(tk)
 	signer = Signer{
-		tk:        tk,
-		tkSigner:  &tkSigner,
-		devPath:   devPathArg,
-		speed:     speedArg,
-		enterUSS:  enterUSS,
-		fileUSS:   fileUSS,
-		pinentry:  pinentry,
-		connected: atomic.Bool{},
+		tk:       tk,
+		tkSigner: &tkSigner,
+		devPath:  devPathArg,
+		speed:    speedArg,
+		enterUSS: enterUSS,
+		fileUSS:  fileUSS,
+		pinentry: pinentry,
 	}
 
 	// Do nothing on HUP, in case old udev rule is still in effect
@@ -77,121 +71,32 @@ func NewSigner(devPathArg string, speedArg int, enterUSS bool, fileUSS string, p
 
 	// Start handling signals here to catch abort during USS entering
 	handleSignals(func() {
-		signer.disconnect()
+		signer.closeNow()
 		exitFunc(1)
 	}, os.Interrupt, syscall.SIGTERM)
 
 	return &signer
 }
 
-func (s *Signer) Connect() {
-	le.Printf("Connecting!\n")
+func (s *Signer) connect() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	s.disconnect()
-
-	s.connect()
-	if s.isConnected() {
-		if err := s.maybeLoadApp(); err != nil {
-			le.Printf("Failed to load app: %v\n", err)
-			s.disconnect()
+	if s.connected {
+		if s.disconnectTimer != nil {
+			s.disconnectTimer.Stop()
+			s.disconnectTimer = nil
 		}
-	}
-}
-
-func (s *Signer) isConnected() bool {
-	return s.connected.Load()
-}
-
-func (s *Signer) maybeLoadApp() error {
-	if !s.isConnected() {
-		return ErrNoDevice
+		return true
 	}
 
-	if s.isWantedApp() {
-		if s.enterUSS || s.fileUSS != "" {
-			le.Printf("App already loaded, USS flags are ignored.\n")
-		} else {
-			le.Printf("App already loaded.\n")
-		}
-		s.printAuthorizedKey()
-		return nil
-	}
-
-	if !s.isFirmwareMode() {
-		// now we know that:
-		// - loaded app does not have the wanted name
-		// - device is not in firmware mode
-		// anything else is possible
-		return ErrMaybeWrongDevice
-	}
-
-	le.Printf("The TKey is in firmware mode.\n")
-	var err error
-	var secret []byte
-	if s.enterUSS {
-		var udi *tk1.UDI
-
-		udi, err = s.tk.GetUDI()
-		if err != nil {
-			return fmt.Errorf("Failed to get UDI: %w", err)
-		}
-
-		secret, err = getSecret(udi.String(), s.pinentry)
-		if err != nil {
-			return fmt.Errorf("Failed to get USS: %w", err)
-		}
-	} else if s.fileUSS != "" {
-		secret, err = util.ReadUSS(s.fileUSS)
-		if err != nil {
-			return fmt.Errorf("Failed to read uss-file %s: %w", s.fileUSS, err)
-		}
-	}
-
-	le.Printf("Loading app...\n")
-	if err = s.tk.LoadApp(appBinary, secret); err != nil {
-		return fmt.Errorf("LoadApp: %w", err)
-	}
-	le.Printf("App loaded.\n")
-	s.printAuthorizedKey()
-	return nil
-}
-
-func (s *Signer) printAuthorizedKey() {
-	if !s.isConnected() {
-		return
-	}
-
-	sshPub, err := s.getSSHPub()
-	if err != nil {
-		le.Printf("Failed to getSSHPub: %s\n", err)
-		return
-	}
-
-	le.Printf("Your SSH public key (on stdout):\n")
-	fmt.Fprintf(os.Stdout, "%s", ssh.MarshalAuthorizedKey(sshPub))
-}
-
-func (s *Signer) getSSHPub() (ssh.PublicKey, error) {
-	pub := s.Public()
-	if pub == nil {
-		return nil, fmt.Errorf("pubkey is nil")
-	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, fmt.Errorf("NewPublicKey: %w", err)
-	}
-	return sshPub, nil
-}
-
-func (s *Signer) connect() {
 	devPath := s.devPath
 	if devPath == "" {
 		var err error
 		devPath, err = util.DetectSerialPort(false)
 		if err != nil {
 			le.Printf("Failed to detect ports: %v\n", err)
-			s.connected.Store(false)
-			return
+			return false
 		}
 		le.Printf("Auto-detected serial port %s\n", devPath)
 	}
@@ -199,35 +104,38 @@ func (s *Signer) connect() {
 	le.Printf("Connecting to TKey on serial port %s\n", devPath)
 	if err := s.tk.Connect(devPath, tk1.WithSpeed(s.speed)); err != nil {
 		le.Printf("Failed to connect: %v", err)
-		s.connected.Store(false)
-		return
-	}
-
-	s.connected.Store(true)
-}
-
-func (s *Signer) disconnect() {
-	if s.tkSigner == nil {
-		return
-	}
-
-	if !s.isConnected() {
-		le.Printf("Disconnect: not connected\n")
-		return
-	}
-
-	if err := s.tkSigner.Close(); err != nil {
-		le.Printf("Disconnect: Close failed: %s\n", err)
-	}
-
-	s.connected.Store(false)
-}
-
-func (s *Signer) isWantedApp() bool {
-	if !s.isConnected() {
 		return false
 	}
 
+	if !s.isWantedApp() {
+		// Note: we're just assuming it's firmware if we get any reply
+		_, err := s.tk.GetNameVersion()
+		if err != nil {
+			le.Printf("No TKey on the serial port, or it's not in firmware mode (and already running wrong app)")
+			s.closeNow()
+			return false
+		}
+		le.Printf("The TKey is in firmware mode.\n")
+		if err := s.loadApp(); err != nil {
+			le.Printf("Failed to load app: %v\n", err)
+			s.closeNow()
+			return false
+		}
+	} else {
+		if s.enterUSS || s.fileUSS != "" {
+			le.Printf("Signer app already loaded, USS flags are ignored.\n")
+		} else {
+			le.Printf("Signer app already loaded.\n")
+		}
+	}
+
+	s.printAuthorizedKey()
+
+	s.connected = true
+	return true
+}
+
+func (s *Signer) isWantedApp() bool {
 	nameVer, err := s.tkSigner.GetAppNameVersion()
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
@@ -242,21 +150,95 @@ func (s *Signer) isWantedApp() bool {
 	return true
 }
 
-func (s *Signer) isFirmwareMode() bool {
-	if !s.isConnected() {
-		return false
+func (s *Signer) loadApp() error {
+	var secret []byte
+	if s.enterUSS {
+		udi, err := s.tk.GetUDI()
+		if err != nil {
+			return fmt.Errorf("Failed to get UDI: %w", err)
+		}
+
+		secret, err = getSecret(udi.String(), s.pinentry)
+		if err != nil {
+			return fmt.Errorf("Failed to get USS: %w", err)
+		}
+	} else if s.fileUSS != "" {
+		var err error
+		secret, err = util.ReadUSS(s.fileUSS)
+		if err != nil {
+			return fmt.Errorf("Failed to read uss-file %s: %w", s.fileUSS, err)
+		}
 	}
 
-	_, err := s.tk.GetNameVersion()
-	return err == nil
+	le.Printf("Loading signer app...\n")
+	if err := s.tk.LoadApp(appBinary, secret); err != nil {
+		return fmt.Errorf("LoadApp: %w", err)
+	}
+	le.Printf("Signer app loaded.\n")
+
+	return nil
+}
+
+func (s *Signer) printAuthorizedKey() {
+	pub, err := s.tkSigner.GetPubkey()
+	if err != nil {
+		le.Printf("GetPubKey failed: %s\n", err)
+		return
+	}
+
+	sshPub, err := ssh.NewPublicKey(ed25519.PublicKey(pub))
+	if err != nil {
+		le.Printf("NewPublicKey failed: %s\n", err)
+		return
+	}
+
+	le.Printf("Your SSH public key (on stdout):\n")
+	fmt.Fprintf(os.Stdout, "%s", ssh.MarshalAuthorizedKey(sshPub))
+}
+
+func (s *Signer) disconnect() {
+	if s.tkSigner == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.connected {
+		return
+	}
+
+	if s.disconnectTimer != nil {
+		s.disconnectTimer.Stop()
+	}
+
+	s.disconnectTimer = time.AfterFunc(idleDisconnect, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		s.closeNow()
+		s.connected = false
+		s.disconnectTimer = nil
+		le.Printf("Disconnected from TKey\n")
+	})
+}
+
+func (s *Signer) closeNow() {
+	if s.tkSigner == nil {
+		return
+	}
+	if err := s.tkSigner.Close(); err != nil {
+		le.Printf("Close failed: %s\n", err)
+	}
 }
 
 // implementing crypto.Signer below
 
 func (s *Signer) Public() crypto.PublicKey {
-	if !s.isConnected() {
+	if !s.connect() {
 		return nil
 	}
+	defer s.disconnect()
 
 	pub, err := s.tkSigner.GetPubkey()
 	if err != nil {
@@ -267,9 +249,10 @@ func (s *Signer) Public() crypto.PublicKey {
 }
 
 func (s *Signer) Sign(rand io.Reader, message []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if !s.isConnected() {
-		return nil, ErrNoDevice
+	if !s.connect() {
+		return nil, fmt.Errorf("Connect failed")
 	}
+	defer s.disconnect()
 
 	// The Ed25519 signature must be made over unhashed message. See:
 	// https://cs.opensource.google/go/go/+/refs/tags/go1.18.4:src/crypto/ed25519/ed25519.go;l=80
