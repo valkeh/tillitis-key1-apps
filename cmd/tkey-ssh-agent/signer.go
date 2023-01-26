@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	_ "embed"
@@ -16,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gen2brain/beeep"
 	"github.com/tillitis/tillitis-key1-apps/internal/util"
 	"github.com/tillitis/tillitis-key1-apps/tk1"
 	"github.com/tillitis/tillitis-key1-apps/tk1sign"
@@ -43,6 +45,8 @@ type Signer struct {
 	enterUSS        bool
 	fileUSS         string
 	pinentry        string
+	weLoadedApp     bool
+	pinnedPubKey    ed25519.PublicKey
 	mu              sync.Mutex
 	connected       bool
 	disconnectTimer *time.Timer
@@ -111,21 +115,60 @@ func (s *Signer) connect() bool {
 		// Note: we're just assuming it's firmware if we get any reply
 		_, err := s.tk.GetNameVersion()
 		if err != nil {
+			// Notifying because we're kinda stuck if we end up here
+			notify("Please remove and plug in your TKey again\\n— it might be running some other app than the signer.\\n")
 			le.Printf("No TKey on the serial port, or it's not in firmware mode (and already running wrong app)")
 			s.closeNow()
 			return false
 		}
 		le.Printf("The TKey is in firmware mode.\n")
-		if err := s.loadApp(); err != nil {
+
+		if err = s.loadApp(); err != nil {
 			le.Printf("Failed to load app: %v\n", err)
 			s.closeNow()
 			return false
 		}
+
+		pubKey, err := s.tkSigner.GetPubkey()
+		if err != nil {
+			le.Printf("GetPubKey failed: %s\n", err)
+			s.closeNow()
+			return false
+		}
+
+		s.weLoadedApp = true
+		s.pinnedPubKey = pubKey
 	} else {
 		if s.enterUSS || s.fileUSS != "" {
 			le.Printf("Signer app already loaded, USS flags are ignored.\n")
 		} else {
 			le.Printf("Signer app already loaded.\n")
+		}
+
+		if s.weLoadedApp {
+			// TODO So we did load the signer-app ourselves, and can
+			// notify user of SSH identity change.
+			//
+			// But if the signer-app was loaded already, we'll not be
+			// able to do this. So does it make sense at all? Would it
+			// only make sense if we refuse to function unless we (at
+			// first) load the app ourselves?
+			pubKey, err := s.tkSigner.GetPubkey()
+			if err != nil {
+				le.Printf("GetPubKey failed: %s\n", err)
+				s.closeNow()
+				// TODO Should this be set to false? maybe it should,
+				// because if we can't get the pubkey something is
+				// really broken...
+				s.weLoadedApp = false
+				return false
+			}
+
+			if bytes.Compare(pubKey, s.pinnedPubKey) != 0 {
+				notify("Your SSH identity has changed\\n— because the TKey is running a different signer app.")
+				le.Printf("New pubkey is NOT same as pinned pubkey. Somebody loaded a different signer app?\n")
+				s.weLoadedApp = false
+			}
 		}
 	}
 
@@ -276,4 +319,10 @@ func handleSignals(action func(), sig ...os.Signal) {
 			action()
 		}
 	}()
+}
+
+func notify(msg string) {
+	if err := beeep.Notify(progname, msg, ""); err != nil {
+		le.Printf("Notify with message \"%s\" failed: %s\n", msg, err)
+	}
 }

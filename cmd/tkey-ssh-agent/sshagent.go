@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gen2brain/beeep"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -100,10 +99,7 @@ func (s *SSHAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) 
 
 	if signerAppNoTouch == "" {
 		timer := time.AfterFunc(4*time.Second, func() {
-			err = beeep.Notify(progname, "Touch your Tillitis TKey to confirm SSH login.", "")
-			if err != nil {
-				le.Printf("Notify failed: %s\n", err)
-			}
+			notify("Touch your TKey to confirm SSH login.")
 		})
 		defer timer.Stop()
 
